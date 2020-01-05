@@ -12,7 +12,11 @@
 #include <share/types.h>
 #include <drivers/console.h>
 
+#define CONFIG_SERIAL_DEBUG
+
+
 #define DEBUG_PART
+
 
 #ifdef DEBUG_PART
     #define PART_START(msg) printk("-> "msg" ")
@@ -24,6 +28,8 @@
     #define PART_START(msg) 
     #define PART_END() 
     #define PART_TIP 
+    #define PART_WARRING
+    #define PART_ERROR
 #endif
 
 //内核打印函数的指针
@@ -43,6 +49,7 @@ void AssertionFailure(char *exp, char *file, char *baseFile, int line);
 void Spin(char * func_name);
 void Panic(const char *fmt, ...);
 
-
+PUBLIC void DebugColor(unsigned int color);
+PUBLIC void InitDebugPrint();
 
 #endif   /*_BOOK_DEBUG_H*/

@@ -269,7 +269,6 @@ PUBLIC int DeviceOpen(int devno, unsigned int flags)
     return retval;
 }
 
-
 /**
  * DeviceClose - 关闭设备
  */
@@ -290,13 +289,14 @@ PUBLIC int DeviceClose(int devno)
     /* 如果传入的ID和注册的不一致就直接返回(用于检测没有注册但是使用) */
     if (devno != device->devno)
         return -1;
-    
     /* 增加引用 */
     if (AtomicGet(&device->references) > 0)
         AtomicDec(&device->references);
     else 
         return -1;  /* 引用计数有错误 */
 
+    //printk("dev %x, ref %d\n", device->devno, AtomicGet(&device->references));
+    
     /* 是最后一次引用才关闭 */
     if (AtomicGet(&device->references) == 0) {
         if (device->opSets->close != NULL)

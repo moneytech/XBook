@@ -14,4 +14,8 @@ obj-y	+= brk.o
 obj-y	+= malloc.o
 obj-y	+= file.o
 obj-y	+= dir.o
-	
+obj-y	+= pipe.o
+obj-y	+= signal.o
+obj-y	+= signal2.o
+obj-y	+= time.o
+obj-y	+= task.o

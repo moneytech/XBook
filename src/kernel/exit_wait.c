@@ -10,33 +10,13 @@
 #include <book/debug.h>
 #include <share/string.h>
 #include <book/task.h>
-
-/**
- * AdopeChildren - 过继子进程给init进程
- */
-PRIVATE void AdopeChildren(int parentPid)
-{
-    struct Task *child;
-    //printk(PART_TIP "adope children now!\n");
-    
-    /* 在全局任务链表中查找父进程是自己的子进程 */
-    ListForEachOwner(child, &taskGlobalList, globalList) {
-        /* 如果进程的父pid和当前进程的pid一样，
-        就说明这个进程就是当前进程的子进程 */
-        if (child->parentPid == parentPid) {
-            //printk(PART_TIP "find a child name %s, pid %d\n", child->name, child->pid);
-    
-            /* 把父进程的pid设置成0，而0是init进程的pid */
-            child->parentPid = 0;
-        }
-    }
-}
-
+#include <fs/fs.h>
+#include <fs/bofs/file.h>
 
 /**gl
  * AdopeChildren - 过继子进程给init进程
  */
-PRIVATE void NotifyParent(int parentPid)
+PRIVATE int NotifyParent(int parentPid)
 {
     /*  a.如果父进程处于休眠中，在等待子进程唤醒 
         b.如果父进程在等待我唤醒之前就远去，就会把我过继给init，
@@ -44,6 +24,8 @@ PRIVATE void NotifyParent(int parentPid)
     */
     //printk(PART_TIP "notify parent now!\n");
     
+    int ret = -1;   /* 默认是没有父进程的 */
+
     struct Task *parent;
 
     /* 在全局任务链表中查找子进程的父进程 */
@@ -57,11 +39,40 @@ PRIVATE void NotifyParent(int parentPid)
             /* 将父进程唤醒 */
             TaskUnblock(parent);
 
+            ret = 0;    /* 有父进程在等待 */
             /* 唤醒后就退出查询，因为只有1个父亲，不能有多个父亲吧（偷笑） */
             break;
         }
     }
+    return ret;
 }
+
+/**
+ * AdopeChildren - 过继子进程给init进程
+ */
+PRIVATE void AdopeChildren(struct Task *cur)
+{
+    cur->parentPid = 0;
+    /* 过继给init之后还要提醒一下init才可以 */
+    NotifyParent(cur->parentPid);
+    return;
+
+    struct Task *child;
+    //printk(PART_TIP "adope children now!\n");
+    
+    /* 在全局任务链表中查找父进程是自己的子进程 */
+    ListForEachOwner(child, &taskGlobalList, globalList) {
+        /* 如果进程的父pid和当前进程的pid一样，
+        就说明这个进程就是当前进程的子进程 */
+        if (child->parentPid == cur->parentPid && child == cur) {
+            //printk(PART_TIP "find a child name %s, pid %d\n", child->name, child->pid);
+    
+            /* 把父进程的pid设置成0，而0是init进程的pid */
+            child->parentPid = 0;
+        }
+    }
+}
+
 
 /**
  * ReleaseZombie - 释放僵尸态的进程
@@ -77,6 +88,15 @@ PRIVATE void ReleaseZombie(struct Task *task)
     ListDel(&task->globalList);
 }
 
+PRIVATE void CancelEverything(struct Task *task)
+{
+    /* 取消休眠定时器 */
+    if (task->sleepTimer) {
+        RemoveTimer(task->sleepTimer);
+    }
+}
+
+
 /**
  * SysExit - 进程退出运行
  * 
@@ -85,23 +105,34 @@ PUBLIC void SysExit(int status)
 {
     struct Task *current = CurrentTask();
     //printk(PART_TIP "task name %s exit now!\n", current->name);
-    /* 保存退出状态 */
-    current->exitStatus = status;
-
-    /* 1.把子进程过继给init进程 */
-    AdopeChildren(current->pid);
-
-    /* 2.释放自己占用的资源 */
-    MemoryManagerRelease(current->mm, VMS_RESOURCE | VMS_STACK | VMS_HEAP);
-    
-    /* 3.如果有父进程，就通知父进程我已经远去，来帮我收尸吧
-    在完成父进程唤醒之前不能调度 */
     
     /* 保存之前状态并关闭中断 */
     enum InterruptStatus oldStatus = InterruptDisable();
 
-    NotifyParent(current->parentPid);
+    /* 保存退出状态 */
+    current->exitStatus = status;
 
+    //printk("exit del %s %d\n", current->name, current->pid);
+    /* 从文件系统中删除任务 */
+    //DelTaskFromFS(current->name, current->pid);
+    int ret = NotifyParent(current->parentPid);
+
+    /* 1.把子进程过继给init进程 */
+    if (ret != 0) { /* 如果自己的父进程没有等待自己，就把自己过继给init进程 */
+        AdopeChildren(current);
+    }
+    
+    CancelEverything(current);
+    
+    /* 2.释放自己占用的内存资源 */
+    MemoryManagerRelease(current->mm, VMS_RESOURCE | VMS_STACK | VMS_HEAP);
+    
+    /* 释放文件资源 */
+    BOFS_ReleaseTaskFiles(current);
+
+    /* 3.如果有父进程，就通知父进程我已经远去，来帮我收尸吧
+    在完成父进程唤醒之前不能调度 */
+    
     /* 恢复之前的状态 */
     InterruptSetStatus(oldStatus);
 
@@ -110,7 +141,6 @@ PUBLIC void SysExit(int status)
     /* 4.不让自己运行，调度出去 */
     TaskBlock(TASK_ZOMBIE);
 }
-   
 
 /**
  * SysWait - 等待进程
@@ -148,21 +178,23 @@ ToRepeat:
 
         /* 如果子进程的父进程是当前进程，就找到一个子进程 */
         found = true;
-        //printk(PART_TIP "found a child task.\n");
+        
         /* 如果不是变成zombie，就不管 */
         if (child->status != TASK_ZOMBIE) 
             continue;
 
         /* 子进程是zombie */
-
+        //printk(PART_TIP "found a child task.\n");
         /* 保存子进程的退出状态, 和pid */
-        *status = child->exitStatus;
+        if (status != NULL)
+            *status = child->exitStatus;
+        
         childPid = child->pid;
         /*
-        printk(PART_TIP "find a zombie task %s pid %d exit status %d",
-            child->name, childPid, *status
-        );
-         */
+        printk(PART_TIP "parent %d find a zombie task %s pid %d exit status %d",
+            current->pid, child->name, childPid, *status
+        );*/
+        
         /* 把子进程的task结构体占用的资源释放掉 */
         ReleaseZombie(child);
 

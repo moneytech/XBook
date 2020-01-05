@@ -17,6 +17,7 @@
 #include <book/block.h>
 #include <book/char.h>
 #include <fs/fs.h>
+#include <net/network.h>
 
 /*
  * 功能: 内核的主函数
@@ -33,7 +34,7 @@ int main()
 
 	// 初始化内存缓存
 	InitMemCaches();
-
+    
 	// 初始化内存区域
 	InitVMArea();
 
@@ -61,9 +62,16 @@ int main()
 	/* 初始化块设备 */	
 	InitBlockDevice();
 
+    /* 初始化网络 */
+    InitNetwork();
+    
 	/* 初始化文件系统 */
     InitFileSystem();
 	
+    /* 暂时的提示语言 */
+    printk("Book Say > Welcom to BookOS! Please input 'help' to get more help!\n");
+    printk("Book Say > You can press Alt + F1~F3 to select a different console.\n");
+    
 	/* 加载init进程 */
 	InitFirstProcess("root:/init", "init");
 

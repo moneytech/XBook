@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <unistd.h>
+#include <signal.h>
 
 char test[4096];
 
@@ -17,6 +18,235 @@ int sum(int n)
 	return 0;
 }
 
+#define FIFO_PATH "sys:/pip/fifot"
+
+int pipe_read()
+{
+    int fifofd = open(FIFO_PATH, O_RDONLY);
+    if (fifofd < 0) {
+        printf("open fifo failed!\n");
+        return -1;
+    }
+
+    printf("read open fifo ok!\n");
+  
+    char buf[32];
+    memset(buf, 0, 32);
+    printf("read %d bytes.\n", read(fifofd, buf, 32));
+
+    printf("read data:%s\n", buf);
+
+    close(fifofd);
+    printf("read %d close fifo sucess!\n", getpid());
+
+    return 0;
+}
+
+int pipe_write()
+{
+    int fifofd = open(FIFO_PATH, O_WRONLY);
+    if (fifofd < 0) {
+        printf("open fifo failed!\n");
+        return -1;
+    }
+
+    printf("write open fifo ok!\n");
+
+    char buf[32];
+    memset(buf, 0, 32);
+    strcpy(buf, "hello, fifo!\n");
+
+    printf("write %d bytes.\n", write(fifofd, buf, strlen(buf)));
+    printf("write data:%s\n", buf);
+
+    close(fifofd);
+    printf("write %d close fifo sucess!\n", getpid());
+
+    //printf("write %d bytes.\n", write(fifofd, buf, strlen(buf)));
+    
+    return 0;
+}
+
+int pipe_test()
+{
+    printf("----pipe test----\n");
+    
+    int pipefd[2];
+    if (pipe(pipefd) < 0) {
+        printf("make pipe failed!\n");
+        return -1;
+    }
+    printf("pipe 0:%d 1:%d\n", pipefd[0], pipefd[1]);
+    int fret = fork();
+    if (fret == 0) {
+        printf("I am child, my pid is %d.\n", getpid());
+        /* 关闭读端 */
+        //close(pipefd[0]);
+        char buf[32];
+        memset(buf, 0, 32);
+        strcpy(buf, "Hello, pipe!\n");
+        /* 给父进程发送数据 */
+        printf("write %d bytes\n", write(pipefd[1], buf, strlen(buf) + 1));
+        sleep(1);
+
+        int rcount = read(pipefd[0], buf, 32);
+        printf("read %d bytes, data:%s\n", rcount, buf);
+        
+        //close(pipefd[1]);
+    } else {
+        printf("I am parent, my pid is %d.\n", getpid());
+        
+        /* 关闭写端 */
+        //close(pipefd[1]);
+        char buf[32];
+        memset(buf, 0, 32);
+        /* 读取子进程发送来的数据 */
+        int rcount = read(pipefd[0], buf, 32);
+        printf("read %d bytes, data:%s\n", rcount, buf);
+        sleep(1);
+        
+        memset(buf, 0, 32);
+        strcpy(buf, "Parent reply!\n");
+        printf("write %d bytes\n", write(pipefd[1], buf, strlen(buf) + 1));
+        
+        /* 等待子进程 */
+        _wait(NULL);
+        //close(pipefd[0]);
+    }
+    return 0;
+}
+
+void signal_handler(int signum)
+{
+    printf("signal %d\n", signum);
+
+    //signal(signum, signal_handler);
+}
+
+int signal_test()
+{
+    /*
+    // 管道撕裂测试
+    int fd[2];
+    if (pipe(fd) < 0) {
+        printf("create pipe failed!\n");
+        return -1;
+    }
+
+    // 关闭管道读端
+    close(fd[0]);
+
+    printf("ready to write to pipe.\n");
+    // 往管道写入数据，此时管道没有读端
+    write(fd[1], "hello", 5);
+    */
+
+    // alarm闹钟测试
+    sigset(SIGALRM, signal_handler);
+
+    // 3 秒后闹钟
+    int ret1 = alarm(3);
+
+    // 休眠三秒
+    
+    int slp1 = sleep(10);
+    
+    // 2 秒后闹钟
+    int ret2 = alarm(2);
+    
+    // 休眠1秒
+    int slp2 = sleep(5);
+    
+    // 1 秒后闹钟
+    int ret3 = alarm(3);
+    
+    // 休眠2秒
+    int slp3 = sleep(3);
+    
+    printf("ret1 %d ret2 %d ret3 %d\n", ret1, ret2, ret3);
+    printf("slp1 %d slp2 %d slp3 %d\n", slp1, slp2, slp3);
+    
+    //signal(SIGALRM, signal_handler);
+    alarm(3);
+    
+    pause();
+    sleep(1);
+    return 0;
+}
+
+void termTest()
+{
+    signal(SIGINT, signal_handler);
+
+    while (1) {
+        printf("sleep");
+        sleep(1);
+    }
+}
+
+void handle(int s)
+{
+    printf("user handler start...!\n");
+    sleep(1);
+    printf("user handler end!\n");
+}
+
+void suspendTest()
+{
+    int sum=0;
+    int i;
+    sigset_t sigs,sigt,sigu;
+    sigemptyset(&sigs);
+    sigemptyset(&sigt);
+    sigemptyset(&sigu);
+    sigaddset(&sigs,SIGINT);
+    sigaddset(&sigs,SIGUSR1);//
+    signal(SIGINT,handle);
+    sigprocmask(SIG_BLOCK,&sigs,0);
+    for(i=0;i<10;i++)
+    {
+        printf("copying<%d>!\n",i);
+        sleep(2);//模拟业务处理时间比较长
+        printf("done<%d>!\n",i);
+        sigpending(&sigu);
+        if(sigismember(&sigu,SIGINT))
+        {
+            sigsuspend(&sigt);
+        }
+    }
+    printf("all done\n",sum);
+    printf("over!\n");
+    sigprocmask(SIG_UNBLOCK,&sigs,0);
+}
+
+void sigsuspendTest2()
+{
+    sigset_t newmask,oldmask, zeromask;
+
+    signal(SIGINT,handle);
+
+    sigemptyset(&zeromask);
+
+    sigemptyset(&newmask);
+
+    sigaddset(&newmask, SIGINT);
+
+    if (sigprocmask(SIG_BLOCK, &newmask, &oldmask) < 0)
+        printf("SIG_BLOCK error");
+
+    sleep(3);
+
+    printf("old mask:%x\n", oldmask);
+
+    if (sigsuspend(&oldmask) != -1)
+        printf("sigsuspend error");
+    //sleep(3);
+
+    if (sigprocmask (SIG_SETMASK, &oldmask, NULL) < 0)
+        printf("SIG_SETMASK error");
+
+}
+
 int main(int argc, char *argv[])
 {
 	printf("Welcome to test. my pid %d\n", getpid());
@@ -26,10 +256,33 @@ int main(int argc, char *argv[])
 		printf("args %s ", argv[i]);
 		i++;
 	}
-    //return 0;
-	printf("I will do some test and exit\n");	
 
+    printf("I will do some test and exit\n");	
 
+    printf("----signal test----\n");
+    
+    //signal_test();
+    //sleep(10);
+    suspendTest();
+
+    return 0;
+
+    printf("----fifo test----\n");
+    
+    if (access(FIFO_PATH, F_OK)) {
+        if (mkfifo(FIFO_PATH, M_IREAD | M_IWRITE)) {
+            printf("mkfifo failed!\n");
+            return -1;
+        }
+        remove(FIFO_PATH);
+    }
+    return 0;
+    return pipe_write();
+    
+
+    //pipe_test();
+    
+    return 0;
 	printf("----file test----\n");
     
     //return 0;
@@ -161,13 +414,7 @@ int main(int argc, char *argv[])
 	*maped = 0xfa;
 	printf("mmap %x %x.", maped, *maped);
 
-    int key = 0;
-    while (1) {
-        key = 0;
-        if (read(0, &key, 1)) {
-            printf("%c", key);
-        }
-    }
+    
     printf("I will exit now!\n");
 
 	return 0;
